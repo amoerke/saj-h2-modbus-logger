@@ -1,28 +1,28 @@
-# SAJ/Ampere Logger: Wechselrichter → Supabase
+# SAJ/Ampere Logger: Inverter → Supabase
 
-Liest den Ampere.StoragePro einmal pro Minute per Modbus TCP aus (nur lesend) und schreibt die Werte in Supabase. Fällt die Verbindung zum VPS aus, puffert das Skript lokal in `buffer.jsonl` und liefert später nach.
+Reads the Ampere.StoragePro once per minute via Modbus TCP (read-only) and writes the values to Supabase. If the connection to the VPS is lost, the script buffers locally in `buffer.jsonl` and delivers later.
 
-## 1. Tabelle in Supabase anlegen
+## 1. Create table in Supabase
 
-Öffne Supabase Studio, geh in den SQL-Editor und führe `schema.sql` aus. Für den Logger brauchst du die API-URL deiner Instanz und den `service_role`-Key. Bei Coolify findest du ihn in den Umgebungsvariablen des Supabase-Services (meist `SERVICE_SUPABASESERVICE_KEY`). Der Key umgeht RLS, darum gehört er nur auf den Pi und nirgendwo sonst hin.
+Open Supabase Studio, go to the SQL Editor and run `schema.sql`. For the logger you need the API URL of your instance and the `service_role` key. In Coolify you'll find it in the environment variables of the Supabase service (usually `SERVICE_SUPABASESERVICE_KEY`). The key bypasses RLS, so it belongs only on the Pi and nowhere else.
 
-## 2. Raspberry Pi vorbereiten
+## 2. Prepare Raspberry Pi
 
-Der Pi muss im selben Subnetz wie der Wechselrichter hängen, nicht hinter einem weiteren Router oder Repeater mit eigenem Netz. Test (`<WR-IP>` = IP des Wechselrichters):
+The Pi must be on the same subnet as the inverter, not behind another router or repeater with its own network. Test (`<INVERTER-IP>` = IP of the inverter):
 
 ```bash
-nc -zv <WR-IP> 502
+nc -zv <INVERTER-IP> 502
 ```
 
-## 3. Installieren
+## 3. Install
 
-Vom Mac aus kopieren (Pi-IP und Benutzer anpassen):
+Copy from Mac (adjust Pi IP and user):
 
 ```bash
 scp -r saj-logger pi@<PI-IP>:/tmp/
 ```
 
-Auf dem Pi:
+On the Pi:
 
 ```bash
 sudo mv /tmp/saj-logger /opt/saj-logger
@@ -31,118 +31,87 @@ cd /opt/saj-logger
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
 cp .env.example .env
-nano .env          # URL und Key eintragen
+nano .env          # enter URL and key
 chmod 600 .env
 ```
 
-## 4. Manuell testen
+## 4. Test manually
 
 ```bash
 venv/bin/python saj_logger.py
 ```
 
-Nach dem ersten Durchlauf erscheint eine Zeile wie `PV 3867 W | Batterie ... | Netz ... | Haus ...`. Vergleich die Werte mit der Ampere Home App, vor allem die Vorzeichen (siehe unten). Mit Strg+C beenden.
+After the first run, a line appears like `PV 3867 W | Batterie ... | Netz ... | Haus ...` (the log output is in German). Compare the values with the Ampere Home App, especially the signs (see below). Exit with Ctrl+C.
 
-## 5. Als Dienst einrichten
+## 5. Set up as a service
 
-Falls dein Benutzer nicht `pi` heißt, in `saj-logger.service` die Zeile `User=` anpassen.
+If your user is not named `pi`, adjust the `User=` line in `saj-logger.service`.
 
 ```bash
 sudo cp saj-logger.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now saj-logger
-journalctl -u saj-logger -f     # Live-Log
+journalctl -u saj-logger -f     # live log
 ```
 
-## Vor dem Produktivbetrieb prüfen
+## Before going live, check
 
-- **Nur ein Abfrager:** Nicht parallel Home Assistant oder andere Tools auf den Wechselrichter loslassen. Das WLAN-/Kommunikationsmodul kann bei zu vielen Anfragen die IP sperren. Deshalb erzwingt das Skript mindestens 60 s Intervall.
-- **IP reservieren:** Die IP des Wechselrichters (`<WR-IP>`) im Router fest seiner MAC-Adresse zuordnen.
+- **Only one querier:** Don't run Home Assistant or other tools in parallel against the inverter. The WiFi/communications module can block the IP with too many requests. That's why the script enforces a minimum 60 s interval.
+- **Reserve IP:** Assign the inverter's IP (`<INVERTER-IP>`) to its MAC address permanently in the router.
 
-## Was gesichert ist
+## What is verified
 
-Gegen die kWh-Tageszaehler kalibriert (Stand 26.09.2026, 8300 Messungen ueber
-sechs Tage, Korrelation und Skalierungsfaktor je Register):
+Calibrated against the daily kWh counters (as of 2026-09-26, 8300 measurements over six days, correlation and scaling factor per register):
 
-| Groesse | Offset | r | Faktor |
+| Quantity | Offset | r | Factor |
 |---|---|---|---|
-| `load_power` Hausverbrauch | 11 | +0.98 | 0.99 |
+| `load_power` house consumption | 11 | +0.98 | 0.99 |
 | `battery_power` | 17 | +0.98 | 1.01 |
-| `pv_power` Gesamterzeugung | 16 | +0.99 | 1.00 |
+| `pv_power` total generation | 16 | +0.99 | 1.00 |
 
-- `battery_power`: **positiv = entladen, negativ = laden**. Am 14.09.2026 abends
-  bei 76 % SoC ohne Erzeugung verifiziert. Die Angabe im Wiki der Integration
-  (positiv = laden) ist an dieser Stelle falsch.
-- `grid_import_today_kwh` / `grid_export_today_kwh`: Die SAJ-Register heissen
-  "feedin" und "sell", meinen aber das Gegenteil dessen, was der Name nahelegt.
-  Nachts bei 0 W PV stieg ausschliesslich "feedin" -- das ist also der **Bezug**.
-  Die Spalten sind hier entsprechend umbenannt.
+- `battery_power`: **positive = discharging, negative = charging**. Verified on 2026-09-14 evening at 76% SoC with no generation. The claim in the integration's wiki (positive = charging) is wrong on this point.
+- `grid_import_today_kwh` / `grid_export_today_kwh`: The SAJ registers are called "feedin" and "sell", but mean the opposite of what the names suggest. At night with 0 W PV, only "feedin" rose — so that is **import**. The columns have been renamed accordingly.
 
-Die vier Tageszaehler `pv_today_kwh`, `load_today_kwh`, `grid_import_today_kwh`
-und `grid_export_today_kwh` sind damit belastbar. Sie sind Tageszaehler in kWh
-und werden um Mitternacht zurueckgesetzt, der Tageswert ist also das Maximum:
+The four daily counters `pv_today_kwh`, `load_today_kwh`, `grid_import_today_kwh`, and `grid_export_today_kwh` are thus reliable. They are daily counters in kWh and reset at midnight, so the daily value is the maximum:
 
 ```sql
-select (ts at time zone 'Europe/Berlin')::date as tag,
+select (ts at time zone 'Europe/Berlin')::date as day,
        max(pv_today_kwh)          as pv_kwh,
-       max(grid_export_today_kwh) as einspeisung_kwh,
-       max(grid_import_today_kwh) as bezug_kwh,
-       max(load_today_kwh)        as haus_kwh
+       max(grid_export_today_kwh) as export_kwh,
+       max(grid_import_today_kwh) as import_kwh,
+       max(load_today_kwh)        as house_kwh
 from solar_readings group by 1 order by 1 desc;
 ```
 
-## Es gibt keinen dritten PV-String
+## There is no third PV string
 
-Der Wechselrichter hat zwei Eingaenge. Im String-Block 0x406E stehen auf den
-Offsets 9 und 10, wo Spannung und Strom eines dritten Eingangs liegen wuerden,
-dauerhaft 0xFFFF -- die Kennung fuer "nicht belegt". Offset 11 bleibt 0. Die
-Summe von String 1 und String 2 entspricht `pv_power`.
+The inverter has two inputs. In the string block 0x406E, at offsets 9 and 10, where voltage and current of a third input would be, 0xFFFF appears permanently — the identifier for "not used". Offset 11 remains 0. The sum of string 1 and string 2 equals `pv_power`.
 
-Damit ist auch die frueher vermutete Deutung von **Offset 14 als dritter String
-widerlegt**: Das Register korreliert mit r = +0.97 zur PV-Leistung, betraegt
-aber nur rund ein Drittel davon, waehrend Offset 16 die Gesamterzeugung schon
-vollstaendig abbildet. Was es genau ist, ist offen; es laeuft als Spalte
-`offset14_power` mit.
+This also refutes the earlier hypothesis of **offset 14 as a third string**: The register correlates with r = +0.97 to PV power, but only amounts to about one-third of it, while offset 16 already fully captures total generation. What it exactly is remains open; it runs as a column `offset14_power`.
 
-## Offen: der Momentanwert fuer das Netz
+## Open: the instantaneous value for the grid
 
-`grid_power` (Offset 24) ist **nicht** der Netzanschlusspunkt. In der
-Registerzuordnung gegen die Zaehler erreicht kein Offset des Blocks 0x4095 fuer
-das Netz mehr als r = 0.20; Offset 24 erscheint nicht einmal unter den besten
-vier. Offset 12 liefert denselben Wert wie 24, ist also eine Dublette -- ebenso
-sind Offset 19 und 21 ein identisches Paar, das durchgaengig ueber
-`load_power` liegt und daher eher Scheinleistung in VA sein duerfte.
+`grid_power` (offset 24) is **not** the grid connection point. In the register mapping against the counters, no offset of block 0x4095 for the grid achieves more than r = 0.20; offset 24 doesn't even appear in the top four. Offset 12 delivers the same value as 24, so it's a duplicate — likewise, offsets 19 and 21 are an identical pair that consistently sits above `load_power` and is therefore more likely apparent power in VA.
 
-Fuer Tagesbilanzen ist das ohne Belang, dort zaehlen die kWh-Register. Wer den
-Momentanwert braucht, rechnet ihn aus der Bilanz:
+For daily balances, this is irrelevant; the kWh registers matter there. Whoever needs the instantaneous value calculates it from the balance:
 
-    Netz = Haus - pv_power - max(0, battery_power) + max(0, -battery_power)
+    grid = load_power - pv_power - max(0, battery_power) + max(0, -battery_power)
 
-Zur weiteren Suche laeuft der Rohblock 0x4095 als Spalte `raw_power_block` mit.
-Auswertung:
+For further investigation, the raw block 0x4095 is stored in the column `raw_power_block`.
 
-```bash
-venv/bin/python analyse_bilanz.py --limit 20000
-```
+## Data volume
 
-Das Skript kalibriert jedes Register des Blocks gegen die kWh-Zaehler (Block 6)
-und stellt die Energiebilanz ueber den gesamten Zeitraum auf (Block 8).
-`analyse_register.py` ist der aeltere, groebere Vorlaeufer; seine Nacht-Tests
-melden schon bei 18 W "keine Erzeugung" und sind mit Vorsicht zu lesen.
+1 measurement per minute yields around 525,000 rows per year, so only a few hundred MB. For long-term evaluations, a daily aggregate table filled by n8n at night will be worthwhile later.
 
-## Datenmenge
+## Connection test from Mac
 
-1 Messung pro Minute ergibt rund 525.000 Zeilen pro Jahr, also nur einige Hundert MB. Für Langzeitauswertungen lohnt sich später eine Tagesaggregat-Tabelle, die z. B. n8n nachts befüllt.
-
-## Verbindungstest vom Mac
-
-Bevor der Pi ins Spiel kommt, kannst du alles vom Mac aus prüfen. Im entpackten Ordner:
+Before the Pi comes into play, you can check everything from the Mac. In the unpacked folder:
 
 ```bash
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
-cp .env.example .env    # und ausfüllen
+cp .env.example .env    # and fill in
 venv/bin/python test_mac.py
 ```
 
-Das Skript prüft nacheinander die Modbus-Verbindung (inkl. Seriennummer), ob Supabase erreichbar ist und der Key passt, und schreibt dann einen echten Messwert als Zeile in die Tabelle. Mit `--dry-run` wird nichts geschrieben.
+The script checks the Modbus connection in sequence (including serial number), whether Supabase is reachable and the key is correct, and then writes a real measurement value as a row to the table. With `--dry-run`, nothing is written.

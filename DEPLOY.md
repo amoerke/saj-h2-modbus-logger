@@ -1,71 +1,74 @@
-# Deployment auf dem Raspberry Pi
+# Deployment on the Raspberry Pi
 
-Ziel: `saj_logger.py` laeuft als systemd-Dienst unter `/opt/saj-logger`, startet
-nach jedem Reboot automatisch und schreibt jede Minute nach Supabase.
+Goal: `saj_logger.py` runs as a systemd service from `/opt/saj-logger`, starts
+automatically after every reboot and writes to Supabase once a minute.
 
-Platzhalter in diesem Dokument: `<PI-IP>` (z. B. 192.168.1.50), `<USER>` (der
-Login-Benutzer auf dem Pi, oft `pi`), `<WR-IP>` (IP des Wechselrichters bzw.
-seines Kommunikationsmoduls), `<WR-MAC>` (dessen MAC-Adresse).
+Placeholders in this document: `<PI-IP>` (e.g. 192.168.1.50), `<USER>` (the
+login user on the Pi, often `pi`), `<INVERTER-IP>` (IP of the inverter or its
+communication module), `<INVERTER-MAC>` (its MAC address).
+
+Note: the logger's log output is in German. Messages quoted below are shown
+verbatim so you can search for them.
 
 ---
 
-## 0. Vorbedingungen pruefen
+## 0. Check prerequisites
 
-1. **Supabase-Tabelle existiert.** Falls noch nicht: `schema.sql` im SQL-Editor
-   von Supabase Studio ausfuehren. Gegenprobe im SQL-Editor:
+1. **The Supabase table exists.** If not yet: run `schema.sql` in the SQL editor
+   of Supabase Studio. Cross-check in the SQL editor:
 
    ```sql
    select count(*) from solar_readings;
    ```
 
-2. **Kein zweiter Abfrager.** Wenn der Logger bisher auf dem Mac lief, dort
-   beenden. Das Kommunikationsmodul des Wechselrichters vertraegt nur einen
-   Client; parallele Abfragen koennen zur IP-Sperre fuehren.
+2. **No second client.** If the logger was previously running on your Mac, stop
+   it there. The inverter's communication module tolerates only one client;
+   parallel queries can get the IP blocked.
 
-3. **Pi haengt im richtigen Netz** (im selben Subnetz wie der Wechselrichter,
-   nicht hinter einem weiteren Router/Repeater mit eigenem Netz). Vom Pi aus:
+3. **The Pi is on the right network** (the same subnet as the inverter, not
+   behind another router or repeater with its own network). From the Pi:
 
    ```bash
-   nc -zv <WR-IP> 502
+   nc -zv <INVERTER-IP> 502
    ```
 
-   Muss `succeeded!` melden. Tut es das nicht, ist alles Weitere zwecklos.
+   It must report `succeeded!`. If it doesn't, nothing else will work.
 
 ---
 
-## 1. Pi vorbereiten
+## 1. Prepare the Pi
 
-Per SSH einloggen:
+Log in via SSH:
 
 ```bash
 ssh <USER>@<PI-IP>
 ```
 
-Auf dem Pi:
+On the Pi:
 
 ```bash
 sudo apt update
 sudo apt install -y python3-venv python3-pip netcat-openbsd rsync
-python3 --version          # 3.9+ reicht, 3.11 ist auf Bookworm Standard
+python3 --version          # 3.9+ is enough, 3.11 is the default on Bookworm
 ```
 
 ---
 
-## 2. Code auf den Pi kopieren
+## 2. Copy the code to the Pi
 
-Vom Mac aus, aus dem Projektordner heraus. `venv`, `__pycache__`, Dumps und die
-`.env` bleiben bewusst aussen vor — die `.env` kommt im naechsten Schritt
-separat und mit engen Rechten:
+From your Mac, inside the project folder. `venv`, `__pycache__`, dumps and the
+`.env` are deliberately excluded — the `.env` is copied separately in the next
+step, with tight permissions:
 
 ```bash
-cd <Projektordner>
+cd <project-folder>
 
 rsync -av --exclude venv --exclude __pycache__ --exclude '.env' \
       --exclude '.DS_Store' --exclude 'neu' --exclude '*.csv' \
       ./ <USER>@<PI-IP>:/tmp/saj-logger/
 ```
 
-Auf dem Pi an den Zielort verschieben:
+On the Pi, move it into place:
 
 ```bash
 sudo mkdir -p /opt
@@ -75,25 +78,25 @@ sudo chown -R $USER:$USER /opt/saj-logger
 
 ---
 
-## 3. Konfiguration (.env)
+## 3. Configuration (.env)
 
-Die `.env` enthaelt den `service_role`-Key, der RLS umgeht. Sie gehoert nur auf
-den Pi und muss `600` sein.
+The `.env` contains the `service_role` key, which bypasses RLS. It belongs on
+the Pi only and must be `600`.
 
-Vom Mac aus kopieren:
+Copy it from your Mac:
 
 ```bash
 scp .env <USER>@<PI-IP>:/tmp/saj.env
 ```
 
-Auf dem Pi:
+On the Pi:
 
 ```bash
 mv /tmp/saj.env /opt/saj-logger/.env
 chmod 600 /opt/saj-logger/.env
 ```
 
-Kurz gegenlesen (`INVERTER_HOST`, `SUPABASE_URL`, `SUPABASE_TABLE`):
+Quick sanity check (`INVERTER_HOST`, `SUPABASE_URL`, `SUPABASE_TABLE`):
 
 ```bash
 grep -v KEY /opt/saj-logger/.env
@@ -101,7 +104,7 @@ grep -v KEY /opt/saj-logger/.env
 
 ---
 
-## 4. Virtualenv und Abhaengigkeiten
+## 4. Virtualenv and dependencies
 
 ```bash
 cd /opt/saj-logger
@@ -112,45 +115,44 @@ venv/bin/pip install -r requirements.txt
 
 ---
 
-## 5. Manuell testen (vor dem Dienst!)
+## 5. Test manually (before setting up the service!)
 
 ```bash
 cd /opt/saj-logger
 venv/bin/python saj_logger.py
 ```
 
-Nach spaetestens ein paar Sekunden erscheint eine Zeile wie:
+After a few seconds at most, a line like this appears:
 
 ```
 2026-09-15 20:41:03 INFO PV 3867 W | Batterie 1200 W (laedt), 76.0 % | Netz 33 W | Haus 2700 W
 ```
 
-Pruefen:
+Check:
 
-- Plausible Werte im Vergleich zur Ampere-Home-App, besonders die Vorzeichen.
-- Keine `Supabase 4xx`-Fehlermeldung — die kaeme sofort beim ersten Push.
+- The values are plausible compared to the Ampere Home App, especially the signs.
+- No `Supabase 4xx` error message — it would appear right at the first push.
 
-Gegenprobe in Supabase:
+Cross-check in Supabase:
 
 ```sql
 select ts, pv_power, soc from solar_readings order by ts desc limit 5;
 ```
 
-Dann mit `Strg+C` beenden. Falls eine `buffer.jsonl` entstanden ist, hat der
-Push nicht geklappt — erst das Problem loesen, sonst laeuft der Dienst
-dauerhaft ins Leere.
+Then stop with `Ctrl+C`. If a `buffer.jsonl` has been created, the push did not
+work — fix that first, otherwise the service will keep running into the void.
 
 ---
 
-## 6. Als systemd-Dienst einrichten
+## 6. Set up as a systemd service
 
-Falls dein Benutzer nicht `pi` heisst, die Unit anpassen:
+If your user is not called `pi`, adjust the unit:
 
 ```bash
 sed -i "s/^User=.*/User=$USER/" /opt/saj-logger/saj-logger.service
 ```
 
-Installieren und starten:
+Install and start:
 
 ```bash
 sudo cp /opt/saj-logger/saj-logger.service /etc/systemd/system/
@@ -158,55 +160,46 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now saj-logger
 ```
 
-Status und Live-Log:
+Status and live log:
 
 ```bash
 systemctl status saj-logger
 journalctl -u saj-logger -f
 ```
 
-`enable` sorgt fuer den Autostart nach Reboot, `Restart=always` faengt Abstuerze
-ab (30 s Pause). Beides einmal testen:
+`enable` takes care of autostart after a reboot, `Restart=always` catches
+crashes (30 s pause). Test both once:
 
 ```bash
 sudo reboot
-# nach ~1 Minute wieder einloggen
+# log in again after ~1 minute
 systemctl is-active saj-logger      # -> active
 ```
 
 ---
 
-## 7. Abnahme nach dem ersten Tag
+## 7. Acceptance check after the first day
 
 ```sql
--- Sollte ~60 pro Stunde sein
-select date_trunc('hour', ts) as stunde, count(*)
+-- Should be ~60 per hour
+select date_trunc('hour', ts) as hour, count(*)
 from solar_readings
 where ts > now() - interval '24 hours'
 group by 1 order by 1 desc;
 ```
 
-Luecken deuten auf Modbus-Lesefehler hin — diese stehen als
-`Lesefehler (n in Folge)` im Journal:
+Gaps point to Modbus read errors — they show up in the journal as
+`Lesefehler (n in Folge)` ("read error, n in a row"):
 
 ```bash
 journalctl -u saj-logger --since "24 hours ago" | grep -i fehler
 ```
 
-Ausserdem: die offene Register-Frage laesst sich jetzt auf dem Pi klaeren:
-
-```bash
-cd /opt/saj-logger && venv/bin/python analyse_register.py
-```
-
-(Der Dienst darf dabei weiterlaufen — beide lesen kurz nacheinander, nicht
-gleichzeitig. Im Zweifel vorher `sudo systemctl stop saj-logger`.)
-
 ---
 
-## 8. Betrieb
+## 8. Operation
 
-**Journal-Groesse begrenzen** (sonst waechst das Log auf der SD-Karte):
+**Limit the journal size** (otherwise the log keeps growing on the SD card):
 
 ```bash
 sudo mkdir -p /etc/systemd/journald.conf.d
@@ -214,11 +207,11 @@ printf '[Journal]\nSystemMaxUse=200M\n' | sudo tee /etc/systemd/journald.conf.d/
 sudo systemctl restart systemd-journald
 ```
 
-**Feste IP fuer den Wechselrichter** im Router reservieren: MAC
-`<WR-MAC>` -> `<WR-IP>`. Ebenso fuer den Pi selbst, damit du ihn
-wiederfindest.
+**Fixed IP for the inverter:** reserve it in your router: MAC
+`<INVERTER-MAC>` -> `<INVERTER-IP>`. Do the same for the Pi itself so you can
+always find it.
 
-**Update einspielen** (vom Mac aus):
+**Deploy an update** (from your Mac):
 
 ```bash
 rsync -av --exclude venv --exclude __pycache__ --exclude '.env' \
@@ -227,29 +220,28 @@ rsync -av --exclude venv --exclude __pycache__ --exclude '.env' \
 ssh <USER>@<PI-IP> 'sudo systemctl restart saj-logger'
 ```
 
-Bei geaenderten Abhaengigkeiten zusaetzlich
-`venv/bin/pip install -r requirements.txt`, bei geaenderter Unit-Datei erneut
-kopieren und `sudo systemctl daemon-reload`.
+If dependencies changed, also run `venv/bin/pip install -r requirements.txt`;
+if the unit file changed, copy it again and run `sudo systemctl daemon-reload`.
 
-**Nuetzliche Kommandos**
+**Useful commands**
 
-| Zweck | Kommando |
+| Purpose | Command |
 |---|---|
-| Stoppen | `sudo systemctl stop saj-logger` |
-| Starten | `sudo systemctl start saj-logger` |
-| Autostart aus | `sudo systemctl disable saj-logger` |
-| Log der letzten Stunde | `journalctl -u saj-logger --since -1h` |
-| Puffer pruefen | `wc -l /opt/saj-logger/buffer.jsonl` |
+| Stop | `sudo systemctl stop saj-logger` |
+| Start | `sudo systemctl start saj-logger` |
+| Disable autostart | `sudo systemctl disable saj-logger` |
+| Log of the last hour | `journalctl -u saj-logger --since -1h` |
+| Check the buffer | `wc -l /opt/saj-logger/buffer.jsonl` |
 
 ---
 
-## Fehlerbilder
+## Troubleshooting
 
-| Symptom | Ursache / Abhilfe |
+| Symptom | Cause / fix |
 |---|---|
-| `Keine Verbindung zu <WR-IP>:502` | Pi im falschen Netz oder IP gewechselt; `nc -zv` testen, IP im Router reservieren |
-| Dauerhaft Lesefehler, vorher lief es | Modul hat die IP gesperrt, weil ein zweiter Client abfragt (Home Assistant, Mac-Skript). Alles andere abschalten, Wechselrichter-WLAN-Modul kurz stromlos machen |
-| `Supabase 401` | Falscher Key in `.env` — es muss der `service_role`-Key sein, nicht `anon` |
-| `Supabase 404` | Tabelle fehlt oder `SUPABASE_TABLE` falsch — `schema.sql` ausfuehren |
-| `buffer.jsonl` waechst | VPS/Supabase nicht erreichbar; Daten gehen nicht verloren, werden beim naechsten erfolgreichen Push nachgeliefert (max. ~2 Wochen) |
-| Dienst startet nach Reboot nicht | `systemctl is-enabled saj-logger` pruefen, ggf. `sudo systemctl enable saj-logger` |
+| `Keine Verbindung zu <INVERTER-IP>:502` ("no connection") | Pi on the wrong network or the IP changed; test with `nc -zv`, reserve the IP in the router |
+| Persistent read errors, although it worked before | The module has blocked the IP because a second client is querying (Home Assistant, script on the Mac). Switch everything else off, briefly cut power to the inverter's WiFi module |
+| `Supabase 401` | Wrong key in `.env` — it must be the `service_role` key, not `anon` |
+| `Supabase 404` | Table missing or `SUPABASE_TABLE` wrong — run `schema.sql` |
+| `buffer.jsonl` keeps growing | VPS/Supabase unreachable; no data is lost, it is delivered with the next successful push (max. ~2 weeks) |
+| Service doesn't start after reboot | Check `systemctl is-enabled saj-logger`, if needed `sudo systemctl enable saj-logger` |
