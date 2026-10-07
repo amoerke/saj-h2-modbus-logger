@@ -59,4 +59,15 @@ alter table public.solar_readings enable row level security;
 -- Falls die Tabelle schon ohne die neuen Spalten existiert:
 -- alter table public.solar_readings add column if not exists pv3_power integer;
 -- alter table public.solar_readings add column if not exists raw_power_block jsonb;
--- Fuer eine bestehende Tabelle: migration_2026-09-22.sql und migration_2026-10-06.sql ausfuehren.
+-- alter table public.solar_readings add column if not exists raw_string_block jsonb;
+-- alter table public.solar_readings add column if not exists pv3_voltage numeric(5,1);
+-- alter table public.solar_readings add column if not exists pv3_current numeric(6,2);
+-- alter table public.solar_readings add column if not exists offset14_power integer;
+-- Systemwerte aus Block 0x4200 (Logger ab 06.10.2026) -- VOR dem Neustart
+-- des Loggers ausfuehren, sonst lehnt Supabase die Zeilen ab:
+-- alter table public.solar_readings
+--   add column if not exists sys_pv_power      integer,
+--   add column if not exists sys_battery_power integer,
+--   add column if not exists sys_grid_power    integer,
+--   add column if not exists sys_house_power   integer,
+--   add column if not exists sys_soc           smallint;
