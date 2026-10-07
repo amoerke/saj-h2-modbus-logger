@@ -1,0 +1,18 @@
+# Secrets
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Laufzeitdaten und private Messdaten
+buffer.jsonl
+*.csv
+solar_readings_rows.sql
+Claude outputs/
+neu/
+analyse*.py
+
+# macOS
+.DS_Store

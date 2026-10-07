@@ -1,0 +1,16 @@
+[Unit]
+Description=SAJ/Ampere Wechselrichter -> Supabase Logger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Benutzer anpassen, falls dein Pi-User nicht "pi" heißt
+User=pi
+WorkingDirectory=/opt/saj-logger
+ExecStart=/opt/saj-logger/venv/bin/python /opt/saj-logger/saj_logger.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
